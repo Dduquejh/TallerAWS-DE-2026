@@ -1,2 +1,10 @@
 .vscode/
-.~lock.*#
+.~lock.*
+# Terraform
+Punto2/terraform/.terraform/
+Punto2/terraform/terraform.tfstate
+Punto2/terraform/terraform.tfstate.*
+
+# Python
+__pycache__/
+*.pyc
