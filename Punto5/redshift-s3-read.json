@@ -1,0 +1,22 @@
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListWorkshopBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::talleraws-redshift-573992724610"
+    },
+    {
+      "Sid": "ReadWorkshopCSVs",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::talleraws-redshift-573992724610/datos/*"
+    }
+  ]
+}
+

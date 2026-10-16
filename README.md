@@ -655,6 +655,202 @@ Las capturas no deben mostrar credenciales ni información sensible.
 
 ---
 
+## Punto 5. Amazon Redshift Serverless con Boto3
+
+### Objetivo
+
+Implementar un flujo de procesamiento de datos en Amazon Redshift Serverless utilizando Python y Boto3. La solución carga archivos CSV en Amazon S3, crea las tablas de destino, importa los datos mediante `COPY` y ejecuta consultas analíticas a través de Redshift Data API.
+
+El ejercicio utiliza dos tablas relacionadas (`clientes` y `ventas`) para analizar las transacciones por importe, cliente y ciudad.
+
+### Estructura del proyecto
+
+```text
+Punto5/
+├── datos/
+│   ├── clientes.csv
+│   └── ventas.csv
+├── python/
+│   └── ejecutar_redshift.py
+├── sql/
+│   ├── consultas.sql
+│   └── crear_tablas.sql
+├── redshift-s3-read.json
+├── redshift-s3-trust.json
+└── redshift_policy.json
+```
+
+Descripción de los archivos:
+
+- `datos/clientes.csv`: información de los clientes, incluyendo identificador, nombre y ciudad.
+- `datos/ventas.csv`: transacciones con identificador de venta, cliente, producto, importe y fecha.
+- `python/ejecutar_redshift.py`: programa principal que automatiza la preparación de S3, la validación de recursos, la creación de tablas, la carga de datos y la ejecución de consultas.
+- `sql/crear_tablas.sql`: definición de las tablas `clientes` y `ventas`.
+- `sql/consultas.sql`: consultas SQL utilizadas para el análisis de los datos.
+- `redshift-s3-read.json`: política que permite a Redshift leer los archivos de S3.
+- `redshift-s3-trust.json`: política de confianza que permite a Redshift asumir el rol IAM.
+- `redshift_policy.json`: política de referencia para los permisos de administración y ejecución de la práctica.
+
+### 5.1. Requisitos previos
+
+Se requiere:
+
+- Una cuenta de AWS con permisos suficientes para utilizar S3, Secrets Manager, Redshift Serverless y Redshift Data API.
+- AWS CLI configurado con credenciales válidas.
+- Python 3 y Boto3.
+- Un namespace y un workgroup de Redshift Serverless creados y disponibles.
+- Un secreto en AWS Secrets Manager con las credenciales de acceso a Redshift.
+- Un rol IAM asociado al namespace que permita a Redshift leer los archivos del bucket S3.
+
+La configuración utilizada en el ejercicio es:
+
+| Parámetro | Valor |
+|---|---|
+| Región | `us-east-2` (Ohio) |
+| Namespace | `taller-redshift-ns` |
+| Workgroup | `taller-redshift-wg` |
+| Base de datos | `taller_dw` |
+| Secreto | `taller/redshift/admin` |
+| Rol IAM | `RedshiftS3ReadRole` |
+| Bucket S3 | `talleraws-redshift-<ACCOUNT_ID>` |
+| Prefijo de archivos | `datos/` |
+
+Los recursos de infraestructura deben estar creados antes de ejecutar el programa. El script automatiza el flujo de datos, pero no crea el namespace ni el workgroup de Redshift Serverless.
+
+### 5.2. Configurar las credenciales de AWS
+
+Configurar o seleccionar un perfil de AWS con los permisos necesarios. Por ejemplo, si se utiliza el perfil `user_cli`:
+
+```bash
+export AWS_PROFILE=user_cli
+```
+
+Comprobar que las credenciales sean válidas:
+
+```bash
+aws sts get-caller-identity
+```
+
+El programa utiliza las credenciales del perfil configurado para realizar las llamadas a AWS. No se deben incluir claves de acceso ni contraseñas directamente en el código fuente.
+
+### 5.3. Instalar las dependencias
+
+Desde la raíz del repositorio, instalar Boto3:
+
+```bash
+python -m pip install boto3
+```
+
+Si se utiliza un entorno virtual o conda, activarlo antes de instalar la dependencia y ejecutar el programa.
+
+### 5.4. Preparar y cargar los datos
+
+Los archivos de entrada se encuentran en `Punto5/datos/`. El programa utiliza estos archivos para cargarlos en S3 y posteriormente importarlos en Redshift.
+
+Desde la raíz del repositorio, ejecutar:
+
+```bash
+python Punto5/python/ejecutar_redshift.py
+```
+
+El programa realiza automáticamente las siguientes operaciones:
+
+1. **Preparación de S3:** verifica si existe el bucket del ejercicio, lo crea si no existe y carga `clientes.csv` y `ventas.csv` en el prefijo `datos/`. También verifica la existencia de los archivos cargados.
+2. **Validación de recursos:** comprueba el secreto de Secrets Manager y el estado del namespace y del workgroup de Redshift Serverless. También verifica la asociación del rol IAM utilizado para acceder a S3.
+3. **Creación de tablas:** ejecuta las sentencias SQL para crear las tablas `clientes` y `ventas` si todavía no existen.
+4. **Carga de datos:** limpia los datos anteriores de las tablas y ejecuta las sentencias `COPY` para importar los CSV desde S3 mediante el rol IAM.
+5. **Ejecución de consultas:** envía las consultas a Redshift Data API, espera a que finalicen y recupera los resultados.
+6. **Verificación:** consulta la cantidad de registros cargados para comprobar el resultado del proceso.
+
+No es necesario ejecutar manualmente los archivos SQL ni copiar las sentencias en Query Editor v2 para reproducir el flujo.
+
+**Importante:** el programa vacía las tablas antes de volver a cargar los datos. Cada ejecución reemplaza los registros anteriores por los datos presentes en los CSV locales. Ejecutarlo únicamente sobre la base de datos destinada a esta práctica.
+
+### 5.5. Modelo de datos
+
+El ejercicio utiliza dos tablas relacionadas por el campo `cliente_id`.
+
+**Tabla `clientes`**
+
+| Campo | Descripción |
+|---|---|
+| `cliente_id` | Identificador del cliente |
+| `nombre` | Nombre del cliente |
+| `ciudad` | Ciudad de residencia |
+
+**Tabla `ventas`**
+
+| Campo | Descripción |
+|---|---|
+| `venta_id` | Identificador de la venta |
+| `cliente_id` | Cliente asociado a la transacción |
+| `producto` | Producto vendido |
+| `importe` | Valor de la venta en pesos colombianos |
+| `fecha` | Fecha de la transacción |
+
+La relación entre ambas tablas permite asociar cada venta con el cliente que la realizó y analizar los resultados por cliente o ciudad.
+
+### 5.6. Consultas y preguntas de negocio
+
+El programa ejecuta las consultas analíticas definidas para el ejercicio.
+
+1. **Ventas superiores a $900.000 COP:** identifica las transacciones que superan el importe establecido mediante un filtro `WHERE`.
+2. **Detalle de ventas y clientes:** utiliza `JOIN` para relacionar las transacciones con los nombres y ciudades de los clientes.
+3. **Ventas por cliente:** utiliza `SUM`, `COUNT` y `GROUP BY` para calcular el importe acumulado y el número de compras de cada cliente.
+4. **Ventas por ciudad:** agrupa las transacciones por ciudad para comparar los ingresos y la cantidad de ventas.
+
+Estas consultas demuestran el uso de filtros, uniones y agregaciones para transformar los datos transaccionales en información útil para el análisis comercial.
+
+### 5.7. Verificación de resultados
+
+Al finalizar la ejecución, el programa debe mostrar los resultados de las consultas y los conteos de las tablas.
+
+Con los archivos CSV del proyecto, se esperan los siguientes conteos:
+
+| Tabla | Registros esperados |
+|---|---:|
+| `clientes` | 6 |
+| `ventas` | 12 |
+
+Si las cantidades no coinciden, revisar los mensajes de error del programa, el contenido de los CSV, la ubicación de los archivos en S3 y los permisos del rol IAM.
+
+También se puede utilizar Query Editor v2 como herramienta opcional de inspección, siempre que la base de datos continúe disponible. No es necesario utilizarlo para ejecutar el procedimiento automatizado.
+
+### 5.8. Limpieza de recursos
+
+Al terminar las pruebas y guardar las evidencias, eliminar los recursos exclusivos del ejercicio para reducir costos.
+
+Los recursos que deben revisarse son:
+
+- Workgroup de Redshift Serverless.
+- Namespace de Redshift Serverless.
+- Bucket S3 y los objetos almacenados.
+- Secreto de Secrets Manager.
+- Rol IAM y sus políticas específicas, siempre que no estén compartidos con otros ejercicios.
+
+Antes de eliminar el namespace, verificar que el workgroup haya sido eliminado y que no queden recursos dependientes. Para eliminar el bucket, primero deben borrarse sus objetos.
+
+No eliminar recursos compartidos, como una VPC predeterminada, ni políticas IAM utilizadas por otros puntos del taller.
+
+### 5.9. Evidencias de ejecución
+
+Para documentar el ejercicio, conservar capturas que demuestren:
+
+- La carga de los dos archivos CSV a S3.
+- La creación de las tablas y la carga de datos en Redshift.
+- Los resultados de las cuatro consultas analíticas.
+- La verificación de los seis clientes y las doce ventas.
+
+Las capturas deben mostrar los resultados sin exponer contraseñas, claves de acceso ni valores sensibles de Secrets Manager.
+
+### Conclusión
+
+La práctica demuestra cómo automatizar un flujo de datos en AWS mediante Boto3, Amazon S3, Amazon Redshift Serverless y Redshift Data API. Los archivos CSV se almacenan en S3 y se importan a las tablas de Redshift mediante `COPY`, utilizando un rol IAM con permisos de lectura.
+
+Posteriormente, el programa ejecuta consultas SQL para filtrar transacciones, relacionar clientes con ventas y calcular indicadores por cliente y ciudad. Este flujo integra almacenamiento, carga y análisis de datos, y permite reproducir el ejercicio sin ejecutar manualmente las consultas desde la consola de AWS.
+
+---
+
 ## Buenas prácticas para publicar el proyecto
 
 Antes de subir los cambios al repositorio:
