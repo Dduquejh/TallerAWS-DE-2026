@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "QueryNeptuneGraph",
+      "Effect": "Allow",
+      "Action": [
+        "neptune-db:ReadDataViaQuery",
+        "neptune-db:WriteDataViaQuery",
+        "neptune-db:DeleteDataViaQuery",
+        "neptune-db:GetEngineStatus",
+        "neptune-db:GetQueryStatus",
+        "neptune-db:CancelQuery"
+      ],
+      "Resource": "arn:aws:neptune-db:us-east-2:573992724610:*/*"
+    }
+  ]
+}

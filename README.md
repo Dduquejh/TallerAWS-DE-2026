@@ -48,8 +48,6 @@ Crear y administrar un secreto en AWS Secrets Manager y consultar sus metadatos 
 python Punto1/punto1.py
 ```
 
-Si el nombre del archivo es diferente, utilizar el script disponible en `Punto1/`.
-
 ### Verificar el secreto con AWS CLI
 
 Consultar sus metadatos:
@@ -71,6 +69,15 @@ aws secretsmanager get-secret-value \
 Reemplazar el marcador por el nombre o ARN del secreto creado.
 
 **Seguridad:** la salida de `get-secret-value` puede contener contraseñas u otros datos sensibles. No incluirla en capturas públicas ni subirla a Git.
+
+### Políticas IAM
+
+En `Punto1/` se encuentran los siguientes archivos:
+
+- `read_secret_key_policy.json`
+- `write_and_delete_global_policy_secret_manager.json`
+
+Estos archivos contienen las políticas de referencia utilizadas para los permisos de Secrets Manager.
 
 ### Limpieza
 
@@ -107,28 +114,25 @@ aws sts get-caller-identity
 aws configure get region
 ```
 
-Ubicar los scripts de creación y eliminación:
+Desde la raíz del repositorio, revisar los scripts disponibles:
 
 ```bash
-find Punto2 -maxdepth 3 -type f
+ls -l Punto2/aws_cli/
 ```
 
-Revisar el contenido de los scripts antes de ejecutarlos y confirmar los nombres de recursos y la región.
-
-Si los archivos tienen los nombres `cli_create.sh` y `cli_destroy.sh`, ejecutarlos desde la raíz:
+Crear los recursos:
 
 ```bash
-chmod +x Punto2/cli/cli_create.sh Punto2/cli/cli_destroy.sh
-./Punto2/cli/cli_create.sh
+bash Punto2/aws_cli/cli_create.sh
 ```
 
-Verificar en la consola de AWS que los recursos se hayan creado correctamente.
-
-Al finalizar:
+Eliminar los recursos al finalizar las pruebas:
 
 ```bash
-./Punto2/cli/cli_destroy.sh
+bash Punto2/aws_cli/cli_destroy.sh
 ```
+
+Revisar el contenido de los scripts antes de ejecutarlos y confirmar los nombres de los recursos y la región configurada. Verificar en AWS que los recursos se hayan creado o eliminado correctamente.
 
 ### 2.2 Boto3
 
@@ -138,27 +142,31 @@ Instalar la biblioteca:
 python -m pip install boto3
 ```
 
-Boto3 utiliza la cadena estándar de credenciales de AWS. Si se utiliza un perfil específico, configurarlo en la terminal antes de ejecutar el script:
+Boto3 utiliza la cadena estándar de credenciales de AWS. Si se utiliza el perfil `user_cli`, configurarlo en la terminal:
 
 ```bash
 export AWS_PROFILE=user_cli
 ```
 
-Listar los archivos disponibles:
+Revisar los scripts disponibles:
 
 ```bash
-find Punto2/boto3 -maxdepth 2 -type f
+ls -l Punto2/boto3/
 ```
 
-Ejecutar el script de creación correspondiente. Por ejemplo, si se llama `boto3_create.py`:
+Crear los recursos:
 
 ```bash
 python Punto2/boto3/boto3_create.py
 ```
 
-Después, ejecutar el script de eliminación correspondiente que se encuentre en esa carpeta.
+Eliminar los recursos al finalizar:
 
-Revisar siempre que los scripts eliminen únicamente los recursos creados para la práctica.
+```bash
+python Punto2/boto3/boto3_destroy.py
+```
+
+Verificar que los scripts utilicen la región y las credenciales esperadas, y que eliminen únicamente los recursos creados para esta práctica.
 
 ### 2.3 Terraform
 
@@ -203,6 +211,19 @@ terraform destroy
 Revisar el plan de destrucción antes de confirmarlo.
 
 **Importante:** no eliminar manualmente recursos de red compartidos que no pertenezcan al ejercicio. Los archivos de estado de Terraform pueden contener información sensible, por lo que no deben publicarse en Git.
+
+### Políticas IAM
+
+En `Punto2/` se encuentran:
+
+- `UserCLI-EC2ACCESS-policy.json`
+- `UserCLI-RDSACCESS-policy.json`
+- `UserCLI-S3ACCESS-policy.json`
+- `UserCLI-SecretsAndIdentity-policy.json`
+
+Estas políticas corresponden a los permisos de acceso utilizados para los servicios del ejercicio.
+
+En el repositorio se incluyen `Punto2/terraform/main.tf` y `Punto2/terraform/.terraform.lock.hcl`. El directorio `.terraform/` y los archivos `terraform.tfstate*` se excluyen mediante `.gitignore`, ya que corresponden a archivos locales y de estado de Terraform.
 
 ### Comparación de los métodos
 
@@ -347,6 +368,291 @@ aws secretsmanager delete-secret \
 
 Eliminar los grupos de seguridad solo después de verificar sus identificadores y confirmar que no se utilizan en otros recursos. No eliminar la VPC ni las subredes compartidas.
 
+### Política IAM
+
+En `Punto3/` se encuentra:
+
+- `UserCLI-documentdb-policy.json`
+
+---
+
+## Punto 4. Amazon Neptune Serverless y consultas sobre grafos
+
+### Objetivo
+
+Desplegar un clúster de Amazon Neptune Serverless en AWS, construir un grafo que represente personas, vehículos y lugares, y ejecutar consultas utilizando el lenguaje de recorridos Gremlin.
+
+La práctica incluye la configuración de red y permisos IAM, la conexión desde Python mediante HTTPS, la creación de vértices y relaciones, la ejecución de consultas y la eliminación de los recursos al finalizar.
+
+### 4.1 Preparación de AWS
+
+Seleccionar la región `us-east-2` (Ohio) y verificar la identidad utilizada por AWS CLI:
+
+```bash
+aws sts get-caller-identity
+```
+
+Consultar la región configurada:
+
+```bash
+aws configure get region
+```
+
+La infraestructura utilizada en la práctica incluye:
+
+- Amazon Neptune Serverless.
+- Una VPC y subredes de AWS.
+- Un grupo de subredes para Neptune.
+- Un Security Group para controlar el acceso al puerto TCP `8182`.
+- Políticas IAM para administrar los recursos y autorizar las consultas de datos.
+- Un endpoint público de Neptune para conectarse desde el equipo local.
+
+El Security Group debe permitir el acceso al puerto `8182` únicamente desde la IP pública autorizada. No se debe habilitar el acceso indiscriminado desde Internet.
+
+### 4.2 Crear y configurar Neptune Serverless
+
+Desde la consola de AWS, ingresar a Amazon Neptune y crear un clúster con una configuración Serverless de bajo costo.
+
+La configuración utilizada en esta práctica fue:
+
+| Parámetro | Valor |
+|---|---|
+| Región | `us-east-2` |
+| Clúster | `taller-neptune` |
+| Instancia | `taller-neptune-instance` |
+| Motor | Amazon Neptune |
+| Clase | `db.serverless` |
+| Capacidad mínima | 1 NCU |
+| Capacidad máxima | 2 NCU |
+| Autenticación IAM para datos | Habilitada |
+| Puerto | `8182` |
+| Retención de respaldos | 1 día |
+
+Los valores corresponden a la configuración de referencia del ejercicio. Para reproducirlo en otra cuenta, verificar las opciones disponibles y los costos vigentes en la región seleccionada.
+
+Crear o seleccionar un grupo de subredes que incluya las subredes necesarias para Neptune y asociar el Security Group correspondiente.
+
+Una vez creado el clúster, consultar su estado:
+
+```bash
+aws neptune describe-db-clusters \
+  --region us-east-2 \
+  --db-cluster-identifier taller-neptune
+```
+
+Consultar la instancia:
+
+```bash
+aws neptune describe-db-instances \
+  --region us-east-2 \
+  --db-instance-identifier taller-neptune-instance
+```
+
+Esperar hasta que los recursos estén disponibles antes de continuar.
+
+### 4.3 Configurar permisos IAM
+
+En `Punto4/` se encuentran las políticas utilizadas como referencia:
+
+- `neptune-data-access-policy.json`: permisos para acceder a los datos del grafo.
+- `neptune-serverless-policy.json`: permisos para administrar los recursos de Neptune.
+
+La identidad de AWS utilizada para ejecutar la práctica debe tener permisos suficientes para:
+
+- Crear, consultar y eliminar los recursos de Neptune.
+- Consultar el estado del motor.
+- Ejecutar operaciones de lectura, escritura y eliminación de datos mediante Gremlin.
+
+Las políticas de administración de infraestructura y de acceso a los datos deben distinguirse. Para la autenticación IAM de las consultas se utilizan permisos de Neptune Data API, como `neptune-db:ReadDataViaQuery`, `neptune-db:WriteDataViaQuery` y `neptune-db:DeleteDataViaQuery`, según las operaciones que se requieran.
+
+Los permisos deben limitarse a los recursos del ejercicio y no deben conceder privilegios administrativos innecesarios.
+
+### 4.4 Instalar las dependencias de Python
+
+Desde la raíz del repositorio, instalar las bibliotecas requeridas:
+
+```bash
+python -m pip install boto3 requests requests-aws4auth
+```
+
+Verificar que AWS CLI tenga credenciales válidas y que la identidad utilizada disponga de los permisos correspondientes:
+
+```bash
+aws sts get-caller-identity
+```
+
+Si se utiliza un perfil diferente al predeterminado, configurar `AWS_PROFILE` antes de ejecutar los scripts:
+
+```bash
+export AWS_PROFILE=<NOMBRE_DEL_PERFIL>
+```
+
+No almacenar claves de acceso, tokens ni contraseñas directamente en el código fuente.
+
+### 4.5 Configurar y comprobar la conexión
+
+El archivo `Punto4/test_connection.py` permite comprobar la conexión con Neptune.
+
+Obtener el endpoint de la instancia creada:
+
+```bash
+aws neptune describe-db-instances \
+  --region us-east-2 \
+  --db-instance-identifier taller-neptune-instance \
+  --query "DBInstances[0].Endpoint.Address" \
+  --output text
+```
+
+El endpoint obtenido debe utilizarse en los scripts Python, junto con el puerto `8182`.
+
+Comprobar el estado del motor:
+
+```bash
+aws neptunedata get-engine-status \
+  --region us-east-2 \
+  --endpoint-url https://<ENDPOINT_NEPTUNE>:8182
+```
+
+Reemplazar `<ENDPOINT_NEPTUNE>` por el endpoint real de la instancia.
+
+Ejecutar la prueba de conexión desde la raíz del repositorio:
+
+```bash
+python Punto4/test_connection.py
+```
+
+La conexión implementada utiliza HTTPS y firma de solicitudes mediante AWS Signature Version 4 (SigV4), con el servicio de firma `neptune-db`. La autenticación de red se complementa con las reglas del Security Group.
+
+La arquitectura de acceso se realiza directamente desde el equipo local al endpoint público de Neptune; no utiliza una instancia EC2 ni un túnel SSH.
+
+### 4.6 Construir el grafo
+
+El archivo `Punto4/grafo_neptune.py` crea los vértices y las relaciones del modelo de transporte.
+
+Ejecutar desde la raíz del repositorio:
+
+```bash
+python Punto4/grafo_neptune.py
+```
+
+El grafo contiene 10 vértices distribuidos en tres categorías:
+
+- **Personas:** Ana, Luis, Marta y Juan.
+- **Vehículos:** Bus1, Bus2 y Van1.
+- **Lugares:** Universidad, Estacion y Centro.
+
+También contiene 15 relaciones dirigidas:
+
+| Relación | Significado |
+|---|---|
+| `VIAJA_EN` | Una persona utiliza un vehículo. |
+| `DESTINO` | Una persona tiene un lugar como destino. |
+| `CONECTA` | Un vehículo conecta con un lugar. |
+| `CONDUCE` | Una persona conduce un vehículo. |
+
+El script limpia los vértices existentes antes de insertar el grafo de prueba. Por tanto, debe ejecutarse únicamente sobre el clúster destinado a esta práctica, ya que puede eliminar los datos que ya existan en él.
+
+Al terminar, comprobar que la salida confirme la creación de los vértices y las relaciones esperadas.
+
+### 4.7 Ejecutar las consultas Gremlin
+
+El archivo `Punto4/consultas_neptune.py` ejecuta cuatro consultas sobre el grafo creado.
+
+Ejecutar:
+
+```bash
+python Punto4/consultas_neptune.py
+```
+
+Las consultas permiten:
+
+1. Consultar las personas y los vehículos que utilizan.
+2. Consultar las personas y sus destinos.
+3. Consultar los vehículos y los lugares que conectan.
+4. Recorrer varias relaciones para identificar lugares conectados a los vehículos utilizados por las personas.
+
+Revisar la salida de cada consulta y guardar capturas de los resultados para documentar la ejecución.
+
+### 4.8 Modelo del grafo y arquitectura de acceso
+
+Los diagramas exportados se encuentran en el directorio `Punto4/`:
+
+- `Punto4/grafo_neptune_transporte.png`: representación de las personas, los vehículos, los lugares y sus relaciones.
+- `Punto4/arquitectura_acceso_neptune.png`: arquitectura de conexión desde el equipo local hasta Amazon Neptune Serverless.
+
+El modelo del grafo representa las entidades y relaciones del sistema de transporte. La arquitectura muestra el equipo local, la conexión HTTPS, la VPC, el Security Group y Amazon Neptune Serverless.
+
+### 4.9 Eliminar los recursos de Neptune
+
+Después de guardar el código, los resultados y las evidencias, eliminar los recursos para evitar cargos posteriores.
+
+Primero, solicitar la eliminación de la instancia:
+
+```bash
+aws neptune delete-db-instance \
+  --region us-east-2 \
+  --db-instance-identifier taller-neptune-instance \
+  --no-skip-final-snapshot
+```
+
+Si AWS solicita un identificador para la instantánea final, utilizar uno único. La creación de la instantánea puede generar costos de almacenamiento.
+
+Consultar el estado de la instancia:
+
+```bash
+aws neptune describe-db-instances \
+  --region us-east-2 \
+  --db-instance-identifier taller-neptune-instance
+```
+
+Esperar hasta que la instancia haya desaparecido. Si se eligió conservar la instantánea final, esta no se elimina automáticamente con la instancia.
+
+Después, eliminar el clúster:
+
+```bash
+aws neptune delete-db-cluster \
+  --region us-east-2 \
+  --db-cluster-identifier taller-neptune \
+  --skip-final-snapshot
+```
+
+Verificar las opciones y el estado antes de ejecutar el comando.
+
+Comprobar que el clúster ya no exista:
+
+```bash
+aws neptune describe-db-clusters \
+  --region us-east-2 \
+  --db-cluster-identifier taller-neptune
+```
+
+Cuando el clúster haya desaparecido, comprobar los recursos auxiliares y eliminar únicamente los creados para esta práctica, siempre que no tengan dependencias:
+
+- Grupo de subredes `taller-neptune-subnets`.
+- Security Group utilizado exclusivamente por Neptune.
+- Políticas IAM creadas exclusivamente para el ejercicio.
+- Instantánea final, si ya no se necesita conservar.
+
+No eliminar la VPC predeterminada ni las subredes compartidas. Antes de eliminar un Security Group o una política IAM, comprobar que ningún otro recurso o ejercicio los esté utilizando.
+
+**Estado de limpieza de la ejecución realizada:** se eliminaron la instancia `taller-neptune-instance`, el clúster `taller-neptune`, el Security Group `taller-neptune-sg` y el grupo de subredes `taller-neptune-subnets`. Las consultas de verificación no mostraron instancias, clústeres ni instantáneas manuales de Neptune en la región `us-east-2`.
+
+Esta comprobación corresponde a la ejecución realizada y no garantiza que futuras ejecuciones hayan eliminado todos los recursos. Antes de repetir la práctica, verificar el estado de los recursos existentes.
+
+### 4.10 Evidencias de ejecución
+
+Para documentar el resultado del ejercicio, conservar:
+
+- Captura de la configuración y estado del clúster Serverless.
+- Resultado de la comprobación del motor.
+- Salida de la creación del grafo con los 10 vértices y las 15 relaciones.
+- Resultados de las cuatro consultas Gremlin.
+- Diagrama del modelo del grafo.
+- Diagrama de arquitectura de acceso.
+- Evidencia de la eliminación de la instancia y del clúster.
+
+Las capturas no deben mostrar credenciales ni información sensible.
+
 ---
 
 ## Buenas prácticas para publicar el proyecto
@@ -359,4 +665,3 @@ Antes de subir los cambios al repositorio:
 - Revisar los cambios con `git status` y `git diff --cached`.
 - Verificar en AWS que los recursos temporales hayan sido eliminados.
 - Revisar Billing o Cost Explorer después de las pruebas, ya que los costos pueden tardar en actualizarse.
-
