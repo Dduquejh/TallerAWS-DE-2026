@@ -851,6 +851,416 @@ Posteriormente, el programa ejecuta consultas SQL para filtrar transacciones, re
 
 ---
 
+## Punto 6. Implementación de AWS Glue Data Catalog y Amazon Athena
+
+### 6.1. Objetivo
+
+Implementar un proceso de consulta y análisis de ventas almacenadas en Amazon S3 utilizando AWS Glue Data Catalog y Amazon Athena.
+
+El ejercicio permite:
+
+- Almacenar un archivo CSV en Amazon S3.
+- Descubrir automáticamente su esquema mediante un crawler de AWS Glue.
+- Consultar y analizar los datos con SQL en Athena.
+- Actualizar el conjunto de datos y comprobar que las consultas reflejen los cambios.
+- Comparar una tabla creada automáticamente con otra creada manualmente.
+
+### 6.2. Servicios utilizados
+
+| Servicio | Función |
+|---|---|
+| Amazon S3 | Almacenar el archivo CSV y los resultados de Athena. |
+| AWS Glue Data Catalog | Mantener los metadatos y el esquema de la tabla. |
+| AWS Glue Crawler | Detectar el esquema del archivo almacenado en S3. |
+| Amazon Athena | Ejecutar consultas SQL directamente sobre los datos en S3. |
+| AWS IAM | Controlar los permisos de acceso entre los servicios. |
+
+### 6.3. Estructura local
+
+Los archivos del punto están organizados de la siguiente manera:
+
+```text
+Punto6/
+├── datos/
+│   ├── ventas.csv
+│   └── ventas_inicial.csv
+└── Glue-Athena-policy.json
+```
+
+- `datos/ventas.csv`: conjunto actualizado con 28 registros.
+- `datos/ventas_inicial.csv`: conjunto original con 24 registros.
+- `Glue-Athena-policy.json`: archivo de política IAM utilizada como referencia para los permisos de Glue.
+
+Los comandos siguientes se ejecutan desde la carpeta `Punto6/`, salvo que se indique lo contrario.
+
+### 6.4. Requisitos previos
+
+- Una cuenta de AWS con permisos para administrar S3, IAM, Glue y Athena.
+- AWS CLI configurado con credenciales válidas.
+- Región `us-east-2` (Ohio).
+- Un bucket S3 disponible. Para este ejercicio se utilizó `jddh-0717-de`.
+
+Verificar la identidad y la región:
+
+```bash
+aws sts get-caller-identity
+aws configure get region
+```
+
+Definir variables para los comandos posteriores:
+
+```bash
+export AWS_REGION=us-east-2
+export BUCKET=jddh-0717-de
+export DATABASE=taller_aws_punto6
+export CRAWLER=crawler_ventas_punto6
+```
+
+En Fish, las variables equivalentes se pueden definir así:
+
+```fish
+set -x AWS_REGION us-east-2
+set -x BUCKET jddh-0717-de
+set -x DATABASE taller_aws_punto6
+set -x CRAWLER crawler_ventas_punto6
+```
+
+### 6.5. Preparar y cargar los datos en S3
+
+El archivo CSV contiene las columnas:
+
+```text
+id_venta,fecha,ciudad,categoria,monto
+```
+
+El conjunto inicial contiene 24 ventas. Posteriormente se agregaron cuatro registros, para completar 28 ventas.
+
+Comprobar los archivos locales:
+
+```bash
+head -n 5 datos/ventas.csv
+```
+
+Contar los registros, sin incluir el encabezado:
+
+```bash
+awk 'END {print NR-1}' datos/ventas_inicial.csv
+awk 'END {print NR-1}' datos/ventas.csv
+```
+
+Los resultados esperados son `24` y `28`, respectivamente.
+
+Crear el prefijo lógico y cargar el archivo actualizado:
+
+```bash
+aws s3 cp datos/ventas.csv \
+  s3://jddh-0717-de/punto6/ventas.csv \
+  --region us-east-2
+```
+
+Verificar la carga:
+
+```bash
+aws s3 ls s3://jddh-0717-de/punto6/ --region us-east-2
+```
+
+**Nota:** S3 no requiere crear explícitamente una carpeta. El prefijo `punto6/` aparece al cargar el objeto.
+
+### 6.6. Configurar permisos de AWS Glue
+
+Se utilizó el rol IAM `AWSGlueServiceRole`, con la política administrada `AWSGlueServiceRole` y permisos adicionales para leer los datos del prefijo `punto6/` del bucket.
+
+La política de acceso a S3 debe permitir, como mínimo:
+
+- `s3:ListBucket` sobre el bucket, limitado al prefijo del ejercicio cuando corresponda.
+- `s3:GetBucketLocation` sobre el bucket.
+- `s3:GetObject` sobre `arn:aws:s3:::jddh-0717-de/punto6/*`.
+
+La relación de confianza del rol debe permitir que el servicio `glue.amazonaws.com` asuma el rol mediante `sts:AssumeRole`.
+
+La identidad que ejecuta los comandos también necesita permisos para crear y administrar los recursos de Glue. Si crea o modifica el rol desde la CLI, necesitará los permisos IAM correspondientes; para pasar el rol a Glue, necesita `iam:PassRole`.
+
+No se deben guardar claves de acceso ni contraseñas en el repositorio.
+
+### 6.7. Crear la base de datos de Glue
+
+Crear la base de datos del catálogo:
+
+```bash
+aws glue create-database \
+  --database-input '{"Name":"taller_aws_punto6","Description":"Catalogo de ventas del Punto 6"}' \
+  --region us-east-2
+```
+
+Si la base de datos ya existe, no es necesario crearla nuevamente.
+
+### 6.8. Crear y ejecutar el crawler
+
+Crear el crawler para descubrir el esquema del CSV:
+
+```bash
+aws glue create-crawler \
+  --name crawler_ventas_punto6 \
+  --role arn:aws:iam::573992724610:role/AWSGlueServiceRole \
+  --database-name taller_aws_punto6 \
+  --targets '{"S3Targets":[{"Path":"s3://jddh-0717-de/punto6/"}]}' \
+  --schema-change-policy '{"UpdateBehavior":"UPDATE_IN_DATABASE","DeleteBehavior":"DEPRECATE_IN_DATABASE"}' \
+  --region us-east-2
+```
+
+Si el rol tiene un nombre o ARN diferente en otra cuenta, se debe reemplazar por el ARN del rol válido.
+
+Iniciar el crawler:
+
+```bash
+aws glue start-crawler \
+  --name crawler_ventas_punto6 \
+  --region us-east-2
+```
+
+Consultar su estado:
+
+```bash
+aws glue get-crawler \
+  --name crawler_ventas_punto6 \
+  --query 'Crawler.State' \
+  --output text \
+  --region us-east-2
+```
+
+Esperar a que termine y verificar que la última ejecución haya finalizado correctamente.
+
+### 6.9. Verificar la tabla generada
+
+Consultar las tablas del catálogo:
+
+```bash
+aws glue get-tables \
+  --database-name taller_aws_punto6 \
+  --query 'TableList[].Name' \
+  --output table \
+  --region us-east-2
+```
+
+El crawler generó una tabla denominada `punto6`, con el siguiente esquema:
+
+| Columna | Tipo |
+|---|---|
+| `id_venta` | `bigint` |
+| `fecha` | `string` |
+| `ciudad` | `string` |
+| `categoria` | `string` |
+| `monto` | `bigint` |
+
+### 6.10. Configurar Amazon Athena
+
+En la consola de AWS:
+
+1. Abrir Amazon Athena en la región `us-east-2`.
+2. Seleccionar la base de datos `taller_aws_punto6`.
+3. Configurar una ubicación de resultados de consulta, por ejemplo:
+
+```text
+s3://jddh-0717-de/athena-results/punto6/
+```
+
+4. Ejecutar las consultas sobre la tabla `punto6`.
+
+La ubicación de resultados debe existir como prefijo utilizable en S3 y Athena debe tener permisos para escribir en ella. Si la carpeta no existe, Athena puede crear los objetos bajo ese prefijo al ejecutar las consultas.
+
+### 6.11. Consultas iniciales
+
+**Consulta 1. Ventas de Medellín**
+
+```sql
+SELECT id_venta, fecha, ciudad, categoria, monto
+FROM punto6
+WHERE ciudad = 'Medellin'
+ORDER BY monto DESC;
+```
+
+Con el conjunto inicial se obtuvieron nueve registros de Medellín.
+
+**Consulta 2. Resumen de ventas por categoría en Medellín**
+
+```sql
+SELECT
+    categoria,
+    COUNT(*) AS cantidad_ventas,
+    SUM(monto) AS total_ventas,
+    AVG(monto) AS promedio_venta
+FROM punto6
+WHERE ciudad = 'Medellin'
+GROUP BY categoria
+ORDER BY total_ventas DESC;
+```
+
+Resultados esperados con los 24 registros iniciales:
+
+| Categoría | Ventas | Total |
+|---|---:|---:|
+| Electronica | 4 | 5.040.000 |
+| Hogar | 2 | 425.000 |
+| Ropa | 3 | 325.000 |
+| **Total** | **9** | **5.790.000** |
+
+Los valores monetarios del ejercicio están expresados en pesos colombianos (COP).
+
+### 6.12. Actualizar el conjunto de datos
+
+El archivo `datos/ventas.csv` incluye cuatro registros adicionales:
+
+```csv
+25,2026-10-13,Medellin,Electronica,500000
+26,2026-10-13,Bogota,Hogar,200000
+27,2026-10-14,Cali,Ropa,175000
+28,2026-10-14,Medellin,Hogar,300000
+```
+
+Para reproducir la actualización desde el conjunto inicial, primero se debe copiar `datos/ventas_inicial.csv` sobre `datos/ventas.csv` y luego añadir las cuatro filas anteriores. Si el archivo actualizado ya contiene 28 registros, no se deben añadir otra vez.
+
+Volver a cargar el CSV en S3:
+
+```bash
+aws s3 cp datos/ventas.csv \
+  s3://jddh-0717-de/punto6/ventas.csv \
+  --region us-east-2
+```
+
+Ejecutar nuevamente el crawler para actualizar el catálogo:
+
+```bash
+aws glue start-crawler \
+  --name crawler_ventas_punto6 \
+  --region us-east-2
+```
+
+Esperar a que termine correctamente antes de consultar los datos.
+
+### 6.13. Validar los datos actualizados
+
+Volver a ejecutar la consulta de ventas de Medellín y la consulta de agregación por categoría.
+
+Resultados esperados para Medellín:
+
+| Categoría | Ventas | Total |
+|---|---:|---:|
+| Electronica | 5 | 5.540.000 |
+| Hogar | 3 | 725.000 |
+| Ropa | 3 | 325.000 |
+| **Total** | **11** | **6.590.000** |
+
+Comprobar también el total general:
+
+```sql
+SELECT
+    COUNT(*) AS cantidad_ventas,
+    SUM(monto) AS total_ventas
+FROM punto6;
+```
+
+Resultado esperado:
+
+| Registros | Total |
+|---:|---:|
+| 28 | 15.045.000 |
+
+### 6.14. Crear una tabla manual en Athena
+
+Como comparación, se creó la tabla `ventas_manual` sin utilizar un crawler:
+
+```sql
+CREATE EXTERNAL TABLE ventas_manual (
+    id_venta BIGINT,
+    fecha STRING,
+    ciudad STRING,
+    categoria STRING,
+    monto BIGINT
+)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde'
+WITH SERDEPROPERTIES (
+    'separatorChar' = ',',
+    'skip.header.line.count' = '1'
+)
+STORED AS TEXTFILE
+LOCATION 's3://jddh-0717-de/punto6/';
+```
+
+Comparar ambas tablas:
+
+```sql
+SELECT 'punto6' AS tabla, COUNT(*) AS registros, SUM(monto) AS total
+FROM punto6
+
+UNION ALL
+
+SELECT 'ventas_manual' AS tabla, COUNT(*) AS registros, SUM(monto) AS total
+FROM ventas_manual;
+```
+
+Las dos tablas deben devolver 28 registros y un total de 15.045.000, siempre que ambas lean el mismo archivo actualizado.
+
+### 6.15. Resultados y conclusiones
+
+- AWS Glue identificó el esquema del CSV y registró la tabla en Data Catalog.
+- Athena permitió consultar los datos de S3 con SQL, sin cargar las ventas en una base de datos tradicional.
+- Al añadir cuatro ventas y volver a ejecutar el crawler, las consultas reflejaron los nuevos registros.
+- La tabla creada manualmente produjo los mismos resultados que la tabla generada por Glue.
+- Glue Data Catalog almacena metadatos; los registros continúan almacenados en S3.
+
+### 6.16. Limpieza de recursos
+
+Para evitar cargos innecesarios, se eliminaron los recursos creados para el ejercicio.
+
+Si se desea repetir la limpieza desde la CLI, eliminar primero el crawler:
+
+```bash
+aws glue delete-crawler \
+  --name crawler_ventas_punto6 \
+  --region us-east-2
+```
+
+Eliminar las tablas del catálogo:
+
+```bash
+aws glue delete-table \
+  --database-name taller_aws_punto6 \
+  --name punto6 \
+  --region us-east-2
+
+aws glue delete-table \
+  --database-name taller_aws_punto6 \
+  --name ventas_manual \
+  --region us-east-2
+```
+
+Eliminar la base de datos:
+
+```bash
+aws glue delete-database \
+  --name taller_aws_punto6 \
+  --region us-east-2
+```
+
+Los comandos anteriores fallarán si los recursos ya fueron eliminados; en ese caso, no es necesario repetirlos.
+
+**Importante:** durante la limpieza de este taller se eliminaron todos los objetos del bucket `jddh-0717-de`, no solamente los del Punto 6. El bucket se conservó, pero quedó vacío. Para reproducir este punto, se deben volver a cargar el CSV y los resultados de Athena se generarán nuevamente al ejecutar las consultas.
+
+No se recomienda borrar todo el contenido del bucket si contiene objetos pertenecientes a otros puntos del taller.
+
+### 6.17. Consideraciones de costos y seguridad
+
+- S3 puede generar cargos por almacenamiento y solicitudes.
+- Athena cobra por la cantidad de datos procesados por las consultas.
+- Glue puede generar cargos por las ejecuciones del crawler y otros recursos utilizados.
+- Se deben limitar los permisos IAM al bucket y prefijo necesarios.
+- Los resultados de Athena pueden contener datos consultados; deben almacenarse en una ubicación con acceso controlado.
+- Antes de finalizar, verificar que no queden recursos innecesarios ni objetos de resultados que generen costos.
+
+
+
+---
+
 ## Buenas prácticas para publicar el proyecto
 
 Antes de subir los cambios al repositorio:
